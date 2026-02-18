@@ -25,17 +25,17 @@ data:
 
 # ===== Training =====
 train:
-  epochs: 60
+  epochs: 120
   lr: 3.5e-4                 # Head learning rate
   backbone_lr: 3.5e-5        # Backbone learning rate (smaller)
   batch_size: 64              # P x K (e.g., 16 identities x 4 images)
   num_workers: 4
   weight_decay: 5.0e-4
   label_smooth: 0.1
-  warmup_epochs: 5
+  warmup_epochs: 10
 
   # Metric loss: 'triplet' or 'circle'
-  loss_type: triplet
+  loss_type: circle
   metric_weight: 1.0            # weight for metric loss (triplet or circle)
 
   # Triplet loss params (used when loss_type: triplet)
