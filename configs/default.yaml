@@ -1,0 +1,61 @@
+# OSNet ReID Model Configuration
+# Usage:
+#   python scripts/train.py --config configs/default.yaml
+#   python scripts/train.py --config configs/default.yaml --arch osnet_x0_5  # CLI overrides YAML
+
+# ===== Model =====
+model:
+  # Supported architectures:
+  #   osnet_x1_0      (~2.2M) - standard
+  #   osnet_x0_75     (~1.3M) - smaller
+  #   osnet_x0_5      (~0.6M) - lightweight
+  #   osnet_x0_25     (~0.2M) - ultra-light
+  #   osnet_ibn_x1_0  (~2.2M) - with InstanceNorm (cross-domain)
+  #   Run `python scripts/train.py --list-models` to see all options
+  arch: osnet_x1_0
+  pretrained: true
+  reid_dim: 512
+  input_size: [256, 128]    # [height, width]
+
+# ===== Data =====
+data:
+  root: /home/cxt/datasets/reid
+  csv: final_pairs.csv       # CSV filename (relative to root)
+  num_instances: 4           # K: images per identity in a batch
+
+# ===== Training =====
+train:
+  epochs: 60
+  lr: 3.5e-4                 # Head learning rate
+  backbone_lr: 3.5e-5        # Backbone learning rate (smaller)
+  batch_size: 64              # P x K (e.g., 16 identities x 4 images)
+  num_workers: 4
+  weight_decay: 5.0e-4
+  label_smooth: 0.1
+  warmup_epochs: 5
+
+  # Metric loss: 'triplet' or 'circle'
+  loss_type: triplet
+  metric_weight: 1.0            # weight for metric loss (triplet or circle)
+
+  # Triplet loss params (used when loss_type: triplet)
+  triplet_margin: 0.3
+
+  # Circle loss params (used when loss_type: circle)
+  circle_margin: 0.25
+  circle_scale: 64
+
+# ===== Validation =====
+val:
+  val_split: 0.2
+
+# ===== Output =====
+output:
+  project: runs/train
+  name: exp
+
+# ===== Advanced =====
+advanced:
+  ema: false
+  seed: 0
+  device: ""                  # auto-detect if empty
