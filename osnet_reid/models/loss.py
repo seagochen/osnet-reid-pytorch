@@ -82,7 +82,7 @@ class TripletLoss(nn.Module):
         dist_ap, dist_an = [], []
         for i in range(n):
             # Hardest positive
-            pos_mask = mask[i]
+            pos_mask = mask[i].clone()
             pos_mask[i] = False  # exclude self
             if pos_mask.any():
                 dist_ap.append(dist[i][pos_mask].max().unsqueeze(0))

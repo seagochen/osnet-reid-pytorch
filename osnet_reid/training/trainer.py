@@ -71,14 +71,14 @@ class Trainer:
         train_ds, val_ds = random_split(full_dataset, [train_size, val_size], generator=generator)
 
         # For the sampler, we need to create a wrapper that exposes pid_index
-        # for the training subset
+        # Map original dataset indices to Subset positional indices
         train_pid_index = {}
-        for idx in train_ds.indices:
-            row = full_dataset.data.iloc[idx]
+        for pos, orig_idx in enumerate(train_ds.indices):
+            row = full_dataset.data.iloc[orig_idx]
             pid = full_dataset.pid_to_label[row['person_id']]
             if pid not in train_pid_index:
                 train_pid_index[pid] = []
-            train_pid_index[pid].append(idx)
+            train_pid_index[pid].append(pos)
 
         # Create a simple namespace for sampler
         class _SamplerDataset:
