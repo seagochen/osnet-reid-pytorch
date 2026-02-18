@@ -67,10 +67,15 @@ def export_onnx(args):
         }
     })
     config['model']['pretrained'] = False
+    state_dict = ckpt.get('model_state_dict', ckpt.get('model', ckpt))
+
+    # Infer num_classes from checkpoint if needed
+    if config['model'].get('num_classes', 0) == 0 or 'classifier.weight' in state_dict:
+        if 'classifier.weight' in state_dict:
+            config['model']['num_classes'] = state_dict['classifier.weight'].shape[0]
 
     # Create model and load weights
     model = ReIDModel(config)
-    state_dict = ckpt.get('model_state_dict', ckpt.get('model', ckpt))
     model.load_state_dict(state_dict)
     model.eval()
 
