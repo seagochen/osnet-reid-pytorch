@@ -13,7 +13,7 @@ model:
 # ===== Data =====
 data:
   task: face
-  root: /path/to/face/dataset
+  root: /home/cxt/datasets/face_data/
   csv: labels.csv             # CSV: img_path,person_id,camera_id
   num_instances: 8            # more samples per identity helps face tasks
 
