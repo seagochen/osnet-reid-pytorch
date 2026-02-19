@@ -61,7 +61,12 @@ class ReIDDataset(Dataset):
         pid = self.pid_to_label[row['person_id']]
         camid = int(row['camera_id']) if self.has_camid else 0
 
-        image = Image.open(img_path).convert('RGB')
+        try:
+            image = Image.open(img_path).convert('RGB')
+        except Exception:
+            # Return a black placeholder for corrupt images
+            image = Image.new('RGB', (128, 128))
+
         if self.transform:
             image = self.transform(image)
 

@@ -32,6 +32,8 @@ import sys
 
 IMG_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tif', '.tiff'}
 RECORDIO_MAGIC = 0xced7230a
+JPEG_MAGIC = b'\xff\xd8\xff'
+MIN_IMAGE_SIZE = 100  # bytes — anything smaller is metadata, not a real image
 
 
 # ============================================================
@@ -136,7 +138,9 @@ def process_recordio(rec_path: str, idx_path: str, images_dir: str,
             if data is None:
                 continue
             label, img_bytes = parse_irheader(data)
-            if label is None or img_bytes is None or len(img_bytes) == 0:
+            if (label is None or img_bytes is None
+                    or len(img_bytes) < MIN_IMAGE_SIZE
+                    or not img_bytes[:3].startswith(JPEG_MAGIC)):
                 continue
             label_to_indices[label].append(idx)
 
@@ -169,7 +173,8 @@ def process_recordio(rec_path: str, idx_path: str, images_dir: str,
                 if data is None:
                     continue
                 _, img_bytes = parse_irheader(data)
-                if img_bytes is None or len(img_bytes) == 0:
+                if (img_bytes is None or len(img_bytes) < MIN_IMAGE_SIZE
+                        or not img_bytes[:3].startswith(JPEG_MAGIC)):
                     continue
 
                 filename = f"{person_id}_{seq}.jpg"

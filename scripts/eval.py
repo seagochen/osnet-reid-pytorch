@@ -1,15 +1,16 @@
 """
-Evaluation script for OSNet ReID Model.
+Evaluation script for OSNet ReID / Face Recognition Model.
 
 Loads a trained experiment and computes:
   - EER (Equal Error Rate) and optimal threshold
-  - Rank-1 / Rank-5 / Rank-10 / mAP accuracy (CMC evaluation)
+  - TAR@FAR verification metrics (always for face, included for reid)
+  - Rank-1 / Rank-5 / Rank-10 / mAP accuracy (CMC evaluation, reid only)
 
 Usage:
     # From experiment directory (auto-finds config.yaml + weights/best.pt)
     python scripts/eval.py --exp runs/train/exp3
 
-    # Full evaluation (EER + CMC/mAP)
+    # Full evaluation (EER + CMC/mAP for ReID tasks)
     python scripts/eval.py --exp runs/train/exp3 --cmc
 
     # Use final.pt instead of best.pt
@@ -30,9 +31,8 @@ import argparse
 import yaml
 import torch
 import numpy as np
-import torch.nn.functional as F
 from pathlib import Path
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
 # Add project root to path
@@ -43,18 +43,6 @@ if str(ROOT) not in sys.path:
 from osnet_reid.models import ReIDModel
 from osnet_reid.utils import ReIDDataset, get_val_transforms, init_seeds
 from osnet_reid.training.evaluator import find_best_threshold
-
-
-def _load_yaml(path):
-    """Load YAML config file."""
-    p = Path(path)
-    if not p.exists():
-        print(f"Error: Config file not found: {p}")
-        sys.exit(1)
-    with open(p, 'r', encoding='utf-8') as f:
-        cfg = yaml.safe_load(f)
-    print(f"Config: {p}")
-    return cfg
 
 
 def extract_features(model, dataloader, device):
@@ -80,7 +68,7 @@ def extract_features(model, dataloader, device):
     return features, pids, camids
 
 
-def compute_cmc_map(features, pids, camids, ranks=(1, 5, 10)):
+def compute_cmc_map(features, pids, camids, ranks=(1, 5, 10), max_samples=10000):
     """
     Compute CMC (Cumulative Matching Characteristics) and mAP.
 
@@ -92,11 +80,21 @@ def compute_cmc_map(features, pids, camids, ranks=(1, 5, 10)):
         pids: [N] identity labels
         camids: [N] camera IDs
         ranks: Tuple of rank values to evaluate
+        max_samples: Maximum samples to use (subsamples if exceeded)
 
     Returns:
         Dict with rank-k accuracies and mAP
     """
     n = features.size(0)
+
+    # Subsample if dataset is too large for N×N distance matrix
+    if n > max_samples:
+        print(f"  Subsampling {n} -> {max_samples} for CMC/mAP (use --max-samples to adjust)")
+        indices = torch.randperm(n)[:max_samples]
+        features = features[indices]
+        pids = pids[indices]
+        camids = camids[indices]
+        n = max_samples
 
     # Cosine distance matrix (features are already L2-normalized)
     dist_mat = 1 - torch.mm(features, features.t())  # [N, N]
@@ -155,6 +153,18 @@ def compute_cmc_map(features, pids, camids, ranks=(1, 5, 10)):
     mAP = float(np.mean(all_ap))
 
     return cmc, mAP
+
+
+def _load_yaml(path):
+    """Load YAML config file."""
+    p = Path(path)
+    if not p.exists():
+        print(f"Error: Config file not found: {p}")
+        sys.exit(1)
+    with open(p, 'r', encoding='utf-8') as f:
+        cfg = yaml.safe_load(f)
+    print(f"Config: {p}")
+    return cfg
 
 
 def resolve_config_and_weights(args):
@@ -250,6 +260,9 @@ def main():
     # Resolve config and weights
     config, weights_path = resolve_config_and_weights(args)
 
+    # Detect task
+    task = config.get('data', {}).get('task', 'reid')
+
     # Load checkpoint
     print(f"Weights: {weights_path}")
     ckpt = torch.load(weights_path, map_location='cpu', weights_only=False)
@@ -289,27 +302,36 @@ def main():
     model.load_state_dict(state_dict)
     model.to(device)
 
-    print(f"\nModel: {config['model']['arch']}")
+    print(f"\nTask: {task}")
+    print(f"Model: {config['model']['arch']}")
     print(f"ReID dim: {config['model']['reid_dim']}")
     print(f"Dataset: {len(dataset)} images, {dataset.num_pids} identities")
     print(f"Device: {device}")
 
-    # ===== EER Evaluation =====
+    # ===== EER + TAR@FAR Evaluation =====
     print(f"\n{'='*60}")
-    print("EER Evaluation")
+    print("EER + Verification Evaluation")
     print(f"{'='*60}")
-    threshold, eer = find_best_threshold(model, dataloader, device)
+    results = find_best_threshold(model, dataloader, device)
+    threshold = results['threshold']
+    eer = results['eer']
+    tar_at_far = results['tar_at_far']
 
     # ===== CMC / mAP Evaluation =====
     cmc = None
     mAP = None
     if args.cmc:
+        if task == 'face':
+            print(f"\nNote: CMC/mAP is not standard for face recognition (no camera_id).")
+            print(f"  Proceeding with subsampled evaluation...")
+
         print(f"\n{'='*60}")
         print("CMC / mAP Evaluation")
         print(f"{'='*60}")
 
         features, pids, camids = extract_features(model, dataloader, device)
-        cmc, mAP = compute_cmc_map(features, pids, camids)
+        cmc, mAP = compute_cmc_map(
+            features, pids, camids, max_samples=args.max_samples)
 
         print(f"\nResults:")
         for rank_name, acc in cmc.items():
@@ -322,6 +344,9 @@ def main():
     print(f"{'='*60}")
     print(f"  EER:       {eer:.4%}")
     print(f"  Threshold: {threshold:.4f}")
+    if tar_at_far:
+        for far_val, tar_val in sorted(tar_at_far.items(), reverse=True):
+            print(f"  TAR@FAR={far_val:.0e}: {tar_val:.4%}")
     if cmc is not None:
         print(f"  Rank-1:    {cmc['rank-1']:.2%}")
         print(f"  mAP:       {mAP:.2%}")
@@ -329,7 +354,7 @@ def main():
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description='Evaluate OSNet ReID Model',
+        description='Evaluate OSNet ReID / Face Recognition Model',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -360,6 +385,8 @@ Examples:
     # Evaluation options
     parser.add_argument('--cmc', action='store_true',
                         help='Also compute CMC (Rank-1/5/10) and mAP')
+    parser.add_argument('--max-samples', type=int, default=10000,
+                        help='Max samples for CMC/mAP evaluation (default: 10000)')
     parser.add_argument('--batch-size', type=int, default=128,
                         help='Batch size for feature extraction (default: 128)')
     parser.add_argument('--workers', type=int, default=4,
