@@ -1,15 +1,19 @@
 # OSNet ReID PyTorch
 
-Person Re-Identification (ReID) training framework based on [OSNet](https://arxiv.org/abs/1905.00953) (Omni-Scale Feature Learning), implemented in PyTorch.
+Person Re-Identification (ReID) and face recognition training framework based on [OSNet](https://arxiv.org/abs/1905.00953) (Omni-Scale Feature Learning), implemented in PyTorch.
 
 ## Features
 
+- **Dual Task Support**: Person ReID (256x128) and face recognition (112x112) with task-aware configs
 - **OSNet Backbone**: Multi-scale feature extraction via Omni-Scale Blocks with channel attention
 - **5 Architecture Variants**: From ultra-light (0.2M params) to standard (2.2M params)
 - **Dual Loss Training**: CrossEntropy with label smoothing + configurable metric loss (Triplet or Circle Loss)
 - **Batch Hard Mining**: RandomIdentitySampler constructs P-identity x K-image batches
+- **Evaluation**: EER, TAR@FAR verification metrics, CMC/mAP ranking metrics
+- **Inference**: 1:1 verification and 1:N identification with gallery support
 - **YAML + CLI Config**: Flexible configuration with YAML files and CLI overrides
 - **ONNX Export**: Production-ready export with L2-normalized feature output
+- **Dataset Toolkits**: Auto-download and preprocess Kaggle datasets (Market-1501, CUHK03, CASIA-WebFace)
 
 ## Project Structure
 
@@ -26,14 +30,14 @@ osnet-reid-pytorch/
 │   ├── training/
 │   │   ├── config.py             # Config management & model registry
 │   │   ├── trainer.py            # Training pipeline
-│   │   └── evaluator.py          # Validation & EER threshold
+│   │   └── evaluator.py          # Validation, EER & TAR@FAR metrics
 │   └── utils/
 │       ├── general.py            # Seeds, colorstr, increment_path
 │       ├── callbacks/            # EarlyStopping, ModelEMA, LR scheduler
 │       └── data/                 # ReIDDataset, RandomIdentitySampler, transforms
 ├── scripts/
 │   ├── train.py                  # Training entry point
-│   ├── eval.py                   # Evaluation (EER + CMC/mAP)
+│   ├── eval.py                   # Evaluation (EER, TAR@FAR, CMC/mAP)
 │   ├── inference.py              # 1:1 verification & 1:N identification
 │   └── export_onnx.py           # ONNX export script
 ├── toolkits/
@@ -65,7 +69,26 @@ python scripts/train.py --list-models
 pip install -r requirements.txt
 ```
 
-## Dataset Format
+## Dataset Preparation
+
+### Kaggle Datasets (automated)
+
+Download and preprocess datasets from Kaggle with built-in toolkits:
+
+```bash
+# Person ReID: Market-1501 + CUHK03
+python toolkits/preprocess_kaggle_reid.py --output-dir ~/datasets/reid_data --download
+
+# Face Recognition: CASIA-WebFace (490K images, 10K identities)
+python toolkits/preprocess_kaggle_face.py --dataset-dir ~/datasets/face_data --download
+
+# Quick experiment with fewer identities
+python toolkits/preprocess_kaggle_face.py --dataset-dir ~/datasets/face_data --download --max-ids 1000
+```
+
+Requires `kagglehub` (`pip install kagglehub`) and Kaggle API credentials.
+
+### Custom Dataset Format
 
 Prepare a CSV file with the following columns:
 
@@ -86,10 +109,16 @@ train/0002/img_001.jpg,0002,1
 
 ## Training
 
-### Using YAML config (recommended)
+### Person ReID
 
 ```bash
 python scripts/train.py --config configs/reid.yaml
+```
+
+### Face Recognition
+
+```bash
+python scripts/train.py --config configs/face.yaml
 ```
 
 ### CLI overrides
@@ -100,16 +129,6 @@ python scripts/train.py --config configs/reid.yaml \
     --epochs 80 \
     --batch-size 128 \
     --loss-type circle
-```
-
-### Pure CLI (no YAML)
-
-```bash
-python scripts/train.py \
-    --data-root /path/to/dataset \
-    --csv labels.csv \
-    --arch osnet_x1_0 \
-    --epochs 60
 ```
 
 ### Resume training
@@ -150,20 +169,54 @@ runs/train/exp/
     └── final.pt       # Final model with config
 ```
 
+## Evaluation
+
+```bash
+# EER + TAR@FAR (auto-detects face/reid from config)
+python scripts/eval.py --exp runs/train/face
+
+# Include CMC/mAP ranking metrics (standard for ReID)
+python scripts/eval.py --exp runs/train/exp --cmc
+
+# Direct weights path + config
+python scripts/eval.py --weights best.pt --config configs/reid.yaml
+```
+
+**Metrics by task:**
+
+| Metric | ReID | Face |
+|--------|------|------|
+| EER (Equal Error Rate) | Yes | Yes |
+| TAR@FAR (1e-1, 1e-2, 1e-3) | Yes | Yes |
+| CMC (Rank-1/5/10) | Yes (`--cmc`) | Not standard |
+| mAP | Yes (`--cmc`) | Not standard |
+
+## Inference
+
+```bash
+# 1:1 Verification — are these two images the same person?
+python scripts/inference.py --weights best.pt verify --img1 a.jpg --img2 b.jpg
+
+# 1:N Identification — find closest match in gallery
+python scripts/inference.py --weights best.pt identify \
+    --gallery-dir /path/to/gallery/ --query query.jpg
+
+# Using ONNX model
+python scripts/inference.py --onnx model.onnx verify --img1 a.jpg --img2 b.jpg
+```
+
+Gallery directory structure: subfolders named by identity, each containing face/person images.
+
 ## ONNX Export
 
 Export the trained model for deployment. Outputs L2-normalized feature vectors.
 
 ```bash
-# Basic export
-python scripts/export_onnx.py --weights runs/train/exp/weights/best.pt
-
-# With verification
 python scripts/export_onnx.py --weights runs/train/exp/weights/best.pt --verify
 ```
 
 **ONNX model I/O:**
-- Input: `input` — `[batch_size, 3, 256, 128]`
+- Input: `input` — `[batch_size, 3, H, W]` (H/W from training config)
 - Output: `reid_features` — `[batch_size, 512]` (L2-normalized)
 
 ## Architecture Overview
