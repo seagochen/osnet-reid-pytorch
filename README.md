@@ -16,7 +16,8 @@ Person Re-Identification (ReID) training framework based on [OSNet](https://arxi
 ```
 osnet-reid-pytorch/
 ├── configs/
-│   └── default.yaml              # Training configuration template
+│   ├── reid.yaml                # Person ReID configuration
+│   └── face.yaml                # Face recognition configuration
 ├── osnet_reid/
 │   ├── models/
 │   │   ├── osnet.py              # OSNet backbone architecture
@@ -32,7 +33,12 @@ osnet-reid-pytorch/
 │       └── data/                 # ReIDDataset, RandomIdentitySampler, transforms
 ├── scripts/
 │   ├── train.py                  # Training entry point
+│   ├── eval.py                   # Evaluation (EER + CMC/mAP)
+│   ├── inference.py              # 1:1 verification & 1:N identification
 │   └── export_onnx.py           # ONNX export script
+├── toolkits/
+│   ├── preprocess_kaggle_reid.py # Download & preprocess Kaggle ReID datasets
+│   └── preprocess_kaggle_face.py # Download & preprocess CASIA-WebFace
 └── requirements.txt
 ```
 
@@ -83,13 +89,13 @@ train/0002/img_001.jpg,0002,1
 ### Using YAML config (recommended)
 
 ```bash
-python scripts/train.py --config configs/default.yaml
+python scripts/train.py --config configs/reid.yaml
 ```
 
 ### CLI overrides
 
 ```bash
-python scripts/train.py --config configs/default.yaml \
+python scripts/train.py --config configs/reid.yaml \
     --arch osnet_x0_5 \
     --epochs 80 \
     --batch-size 128 \
@@ -109,7 +115,7 @@ python scripts/train.py \
 ### Resume training
 
 ```bash
-python scripts/train.py --config configs/default.yaml --resume exp
+python scripts/train.py --config configs/reid.yaml --resume exp
 ```
 
 ### Key training parameters

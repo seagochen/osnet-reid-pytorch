@@ -51,7 +51,8 @@ class Trainer:
         val_split = config['val'].get('val_split', 0.2)
 
         img_h, img_w = config['model']['input_size']
-        train_transform = get_train_transforms(img_h, img_w)
+        aug_cfg = config['data'].get('augmentation', {})
+        train_transform = get_train_transforms(img_h, img_w, aug_cfg)
         val_transform = get_val_transforms(img_h, img_w)
 
         # Full dataset

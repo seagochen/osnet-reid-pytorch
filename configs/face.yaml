@@ -1,0 +1,61 @@
+# OSNet Face Recognition Configuration
+# Usage:
+#   python scripts/train.py --config configs/face.yaml
+#   python scripts/train.py --config configs/face.yaml --arch osnet_x0_5
+
+# ===== Model =====
+model:
+  arch: osnet_x1_0
+  pretrained: true
+  reid_dim: 512
+  input_size: [112, 112]     # square crop for aligned faces
+
+# ===== Data =====
+data:
+  task: face
+  root: /path/to/face/dataset
+  csv: labels.csv             # CSV: img_path,person_id,camera_id
+  num_instances: 8            # more samples per identity helps face tasks
+
+  augmentation:
+    pad: 4                    # smaller padding for 112x112 images
+    random_flip: 0.5
+    brightness: 0.2
+    contrast: 0.15
+    saturation: 0.1
+    hue: 0.0
+    random_erasing: 0.5
+    erasing_scale: [0.02, 0.4]
+    random_rotation: 10       # slight rotation for face pose variation
+
+# ===== Training =====
+train:
+  epochs: 100
+  lr: 3.5e-4
+  backbone_lr: 3.5e-5
+  batch_size: 128
+  num_workers: 4
+  weight_decay: 5.0e-4
+  label_smooth: 0.1
+  warmup_epochs: 10
+
+  loss_type: circle
+  metric_weight: 1.0
+
+  circle_margin: 0.25
+  circle_scale: 64
+
+# ===== Validation =====
+val:
+  val_split: 0.2
+
+# ===== Output =====
+output:
+  project: runs/train
+  name: face
+
+# ===== Advanced =====
+advanced:
+  ema: false
+  seed: 0
+  device: ""

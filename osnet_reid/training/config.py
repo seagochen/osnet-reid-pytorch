@@ -3,7 +3,7 @@ Training configuration and OSNet model registry.
 Centralized configuration management for OSNet ReID training.
 
 Supports:
-  - YAML config file (--config configs/default.yaml)
+  - YAML config file (--config configs/reid.yaml)
   - CLI arguments override YAML values
 """
 import yaml
@@ -33,7 +33,7 @@ def list_available_models() -> None:
         print(f"  {name:<23} {info['params']:<10} {info['desc']}")
 
     print("\n" + "=" * 70)
-    print("Usage: python scripts/train.py --config configs/default.yaml --arch osnet_x1_0")
+    print("Usage: python scripts/train.py --config configs/reid.yaml --arch osnet_x1_0")
     print("=" * 70 + "\n")
 
 
@@ -104,12 +104,34 @@ def build_config(args) -> Dict[str, Any]:
     m.setdefault('pretrained', True)
     m.setdefault('num_classes', 0)  # auto-detected from dataset
     m.setdefault('reid_dim', 512)
-    m.setdefault('input_size', [256, 128])
 
     d = config['data']
     d.setdefault('root', '')
     d.setdefault('csv', 'labels.csv')
     d.setdefault('num_instances', 4)
+    d.setdefault('task', 'reid')  # 'reid' or 'face'
+
+    # Task-aware defaults for input_size and augmentation
+    task = d['task']
+    if task == 'face':
+        m.setdefault('input_size', [112, 112])
+    else:
+        m.setdefault('input_size', [256, 128])
+
+    aug = d.setdefault('augmentation', {})
+    if task == 'face':
+        aug.setdefault('pad', 4)
+        aug.setdefault('random_rotation', 10)
+    else:
+        aug.setdefault('pad', 10)
+        aug.setdefault('random_rotation', 0)
+    aug.setdefault('random_flip', 0.5)
+    aug.setdefault('brightness', 0.2)
+    aug.setdefault('contrast', 0.15)
+    aug.setdefault('saturation', 0.1)
+    aug.setdefault('hue', 0.0)
+    aug.setdefault('random_erasing', 0.5)
+    aug.setdefault('erasing_scale', [0.02, 0.4])
 
     t = config['train']
     t.setdefault('epochs', 60)
@@ -148,6 +170,7 @@ _CLI_MAP = {
     'num_classes':      ('model', 'num_classes'),
     'reid_dim':         ('model', 'reid_dim'),
     'img_height':       ('model', 'input_size'),  # combined with img_width
+    'task':             ('data', 'task'),
     'data_root':        ('data', 'root'),
     'csv':              ('data', 'csv'),
     'num_instances':    ('data', 'num_instances'),
@@ -180,6 +203,7 @@ _ARGPARSE_DEFAULTS = {
     'reid_dim': 512,
     'img_height': 256,
     'img_width': 128,
+    'task': 'reid',
     'data_root': '',
     'csv': 'labels.csv',
     'num_instances': 4,

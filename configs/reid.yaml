@@ -1,7 +1,8 @@
-# OSNet ReID Model Configuration
+# OSNet Person ReID Configuration
 # Usage:
-#   python scripts/train.py --config configs/default.yaml
-#   python scripts/train.py --config configs/default.yaml --arch osnet_x0_5  # CLI overrides YAML
+#   python scripts/train.py --config configs/reid.yaml
+#   python scripts/train.py --config configs/reid.yaml --arch osnet_x0_5  # CLI overrides YAML
+#   python scripts/train.py --config configs/face.yaml  # face recognition
 
 # ===== Model =====
 model:
@@ -15,13 +16,26 @@ model:
   arch: osnet_x1_0
   pretrained: true
   reid_dim: 512
-  input_size: [256, 128]    # [height, width]
+  input_size: [256, 128]    # [height, width] - reid: [256,128], face: [112,112]
 
 # ===== Data =====
 data:
+  task: reid                 # 'reid' (person re-identification) or 'face' (face recognition)
   root: /home/cxt/datasets/reid
   csv: final_pairs.csv       # CSV filename (relative to root)
   num_instances: 4           # K: images per identity in a batch
+
+  # Augmentation (auto-configured by task, override here if needed)
+  augmentation:
+    pad: 10                  # reid: 10, face: 4
+    random_flip: 0.5
+    brightness: 0.2
+    contrast: 0.15
+    saturation: 0.1
+    hue: 0.0
+    random_erasing: 0.5
+    erasing_scale: [0.02, 0.4]
+    random_rotation: 0       # reid: 0, face: 10 (degrees)
 
 # ===== Training =====
 train:

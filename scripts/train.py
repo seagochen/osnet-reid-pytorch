@@ -3,10 +3,10 @@ Training script for OSNet ReID Model.
 
 Usage:
     # Use YAML config file
-    python scripts/train.py --config configs/default.yaml
+    python scripts/train.py --config configs/reid.yaml
 
     # Use YAML + CLI overrides
-    python scripts/train.py --config configs/default.yaml --arch osnet_x0_5 --epochs 80
+    python scripts/train.py --config configs/reid.yaml --arch osnet_x0_5 --epochs 80
 
     # Pure CLI (no YAML)
     python scripts/train.py --data-root /path/to/dataset --csv labels.csv --arch osnet_x1_0
@@ -41,7 +41,7 @@ def parse_args():
 
     # ===== Config File =====
     parser.add_argument('--config', type=str, default='',
-                        help='Path to YAML config file (e.g., configs/default.yaml)')
+                        help='Path to YAML config file (e.g., configs/reid.yaml)')
 
     # ===== Model =====
     parser.add_argument('--list-models', action='store_true',
@@ -56,6 +56,9 @@ def parse_args():
                         help='ReID feature dimension (default: 512)')
 
     # ===== Data =====
+    parser.add_argument('--task', type=str, default='reid',
+                        choices=['reid', 'face'],
+                        help="Task type: 'reid' (person ReID) or 'face' (face recognition)")
     parser.add_argument('--data-root', type=str, default='',
                         help='Dataset root directory')
     parser.add_argument('--csv', type=str, default='labels.csv',
@@ -129,7 +132,7 @@ def main():
     if not data_root:
         print(colorstr('bright_red', 'Error: data.root is required'))
         print('Usage:')
-        print('  python scripts/train.py --config configs/default.yaml')
+        print('  python scripts/train.py --config configs/reid.yaml')
         print('  python scripts/train.py --data-root /path/to/dataset --csv labels.csv')
         return
 

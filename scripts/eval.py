@@ -19,7 +19,7 @@ Usage:
     python scripts/eval.py --weights runs/train/exp3/weights/best.pt
 
     # Weights + explicit YAML config
-    python scripts/eval.py --weights best.pt --config configs/default.yaml
+    python scripts/eval.py --weights best.pt --config configs/reid.yaml
 
     # Override dataset
     python scripts/eval.py --exp runs/train/exp3 --data-root /other/data --csv labels.csv
@@ -232,7 +232,7 @@ def resolve_config_and_weights(args):
         print("Error: Provide --exp, --weights, or --config + --weights")
         print("Usage:")
         print("  python scripts/eval.py --exp runs/train/exp3")
-        print("  python scripts/eval.py --weights best.pt --config configs/default.yaml")
+        print("  python scripts/eval.py --weights best.pt --config configs/reid.yaml")
         sys.exit(1)
 
     # CLI overrides for data paths
@@ -337,7 +337,7 @@ Examples:
   python scripts/eval.py --exp runs/train/exp3 --cmc
   python scripts/eval.py --exp runs/train/exp3 --weights-name final.pt
   python scripts/eval.py --weights runs/train/exp3/weights/best.pt
-  python scripts/eval.py --weights best.pt --config configs/default.yaml
+  python scripts/eval.py --weights best.pt --config configs/reid.yaml
         """,
     )
 
