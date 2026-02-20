@@ -20,10 +20,10 @@ class RandomIdentitySampler(Sampler):
         num_instances: Number of images per identity in a batch (K)
     """
 
-    def __init__(self, dataset, num_instances=4):
+    def __init__(self, dataset, num_instances=4, batch_size=64):
         self.pid_index = dataset.pid_index
         self.num_instances = num_instances
-        self.num_pids_per_batch = len(self.pid_index)
+        self.num_pids_per_batch = batch_size // num_instances
 
         # Flatten: create index list
         self.pids = list(self.pid_index.keys())
@@ -53,7 +53,7 @@ class RandomIdentitySampler(Sampler):
         final_idxs = []
 
         while len(avail_pids) >= 2:
-            selected_pids = random.sample(avail_pids, min(len(avail_pids), len(avail_pids)))
+            selected_pids = random.sample(avail_pids, min(len(avail_pids), self.num_pids_per_batch))
             for pid in selected_pids:
                 if batch_idxs_dict[pid]:
                     batch_idxs = batch_idxs_dict[pid].pop(0)

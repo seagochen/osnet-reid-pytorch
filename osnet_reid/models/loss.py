@@ -4,7 +4,9 @@ Loss functions for ReID training.
 - CrossEntropyLabelSmooth: Softmax with label smoothing
 - TripletLoss: Triplet loss with batch hard mining
 - CircleLoss: Self-paced pair similarity optimization (CVPR 2020)
+- ArcFaceLoss: Additive Angular Margin Loss (CVPR 2019)
 """
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -177,3 +179,73 @@ class CircleLoss(nn.Module):
         if losses:
             return torch.stack(losses).mean()
         return torch.tensor(0., device=inputs.device, requires_grad=True)
+
+
+class ArcFaceLoss(nn.Module):
+    """
+    ArcFace: Additive Angular Margin Loss (CVPR 2019).
+
+    Adds an angular margin penalty to the target class in cosine space,
+    producing more discriminative features on the hypersphere.
+
+    L = CE(s * (cos(θ_yi + m), cos(θ_j)), y)
+
+    where:
+        θ = angle between L2-normalized feature and weight vectors
+        m = additive angular margin (default 0.5)
+        s = feature scale (default 64)
+
+    Unlike CE + metric loss combos, ArcFace is a single unified loss.
+    It contains its own learnable weight matrix (class centers on the hypersphere).
+    """
+
+    def __init__(self, feature_dim, num_classes, margin=0.5, scale=64):
+        super().__init__()
+        self.feature_dim = feature_dim
+        self.num_classes = num_classes
+        self.margin = margin
+        self.scale = scale
+
+        # Class center weights on the hypersphere
+        self.weight = nn.Parameter(torch.FloatTensor(num_classes, feature_dim))
+        nn.init.xavier_uniform_(self.weight)
+
+        # Precompute margin terms
+        self.cos_m = math.cos(margin)
+        self.sin_m = math.sin(margin)
+        # For numerical stability: threshold where cos(theta+m) is monotonically decreasing
+        self.th = math.cos(math.pi - margin)
+        self.mm = math.sin(math.pi - margin) * margin
+
+        self.criterion = nn.CrossEntropyLoss()
+
+    def forward(self, inputs, targets):
+        """
+        Args:
+            inputs: Feature embeddings [B, D] (will be L2-normalized internally)
+            targets: Identity labels [B]
+
+        Returns:
+            Loss scalar
+        """
+        # L2 normalize features and weights
+        features = F.normalize(inputs, p=2, dim=1)
+        weight = F.normalize(self.weight, p=2, dim=1)
+
+        # cos(theta) = features @ weight^T
+        cosine = F.linear(features, weight)
+        sine = torch.sqrt((1.0 - cosine.pow(2)).clamp(min=1e-12))
+
+        # cos(theta + m) = cos(theta)*cos(m) - sin(theta)*sin(m)
+        phi = cosine * self.cos_m - sine * self.sin_m
+
+        # Numerical stability: when theta > pi - m, use linear approximation
+        phi = torch.where(cosine > self.th, phi, cosine - self.mm)
+
+        # Apply margin only to target class
+        one_hot = torch.zeros_like(cosine)
+        one_hot.scatter_(1, targets.view(-1, 1), 1)
+        logits = (one_hot * phi) + ((1.0 - one_hot) * cosine)
+        logits *= self.scale
+
+        return self.criterion(logits, targets)

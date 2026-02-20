@@ -12,14 +12,14 @@ from pathlib import Path
 from tqdm import tqdm
 from typing import Dict, Any
 
-from ..models import ReIDModel, CrossEntropyLabelSmooth, TripletLoss, CircleLoss
+from ..models import ReIDModel, CrossEntropyLabelSmooth, TripletLoss, CircleLoss, ArcFaceLoss
 from ..utils import (
     ReIDDataset, RandomIdentitySampler,
     get_train_transforms, get_val_transforms,
     ReduceLROnPlateau, ModelEMA,
     colorstr, increment_path,
 )
-from .evaluator import validate
+from .evaluator import validate, validate_arcface
 
 
 class Trainer:
@@ -88,7 +88,8 @@ class Trainer:
         sampler_ds.pid_index = train_pid_index
 
         num_instances = data_cfg.get('num_instances', 4)
-        sampler = RandomIdentitySampler(sampler_ds, num_instances=num_instances)
+        sampler = RandomIdentitySampler(sampler_ds, num_instances=num_instances,
+                                        batch_size=train_cfg['batch_size'])
 
         num_workers = train_cfg['num_workers']
 
@@ -151,6 +152,34 @@ class Trainer:
 
         self.model.to(self.device)
 
+        # Loss setup
+        loss_type = train_cfg.get('loss_type', 'triplet')
+
+        criterion_ce = None
+        criterion_metric = None
+        criterion_arcface = None
+        metric_weight = train_cfg.get('metric_weight', 1.0)
+
+        if loss_type == 'arcface':
+            criterion_arcface = ArcFaceLoss(
+                feature_dim=config['model']['reid_dim'],
+                num_classes=config['model']['num_classes'],
+                margin=train_cfg.get('arcface_margin', 0.5),
+                scale=train_cfg.get('arcface_scale', 64),
+            ).to(self.device)
+        else:
+            criterion_ce = CrossEntropyLabelSmooth(
+                config['model']['num_classes'],
+                epsilon=train_cfg['label_smooth'],
+            )
+            if loss_type == 'circle':
+                criterion_metric = CircleLoss(
+                    margin=train_cfg.get('circle_margin', 0.25),
+                    scale=train_cfg.get('circle_scale', 64),
+                )
+            else:
+                criterion_metric = TripletLoss(margin=train_cfg['triplet_margin'])
+
         # Layered learning rates
         params_backbone = []
         params_other = []
@@ -160,25 +189,14 @@ class Trainer:
             else:
                 params_other.append(param)
 
+        # Include ArcFace weight in head param group
+        if criterion_arcface is not None:
+            params_other.extend(list(criterion_arcface.parameters()))
+
         optimizer = optim.Adam([
             {'params': params_backbone, 'lr': train_cfg['backbone_lr']},
             {'params': params_other, 'lr': train_cfg['lr']},
         ], weight_decay=train_cfg['weight_decay'])
-
-        criterion_ce = CrossEntropyLabelSmooth(
-            config['model']['num_classes'],
-            epsilon=train_cfg['label_smooth'],
-        )
-
-        loss_type = train_cfg.get('loss_type', 'triplet')
-        if loss_type == 'circle':
-            criterion_metric = CircleLoss(
-                margin=train_cfg.get('circle_margin', 0.25),
-                scale=train_cfg.get('circle_scale', 64),
-            )
-        else:
-            criterion_metric = TripletLoss(margin=train_cfg['triplet_margin'])
-        metric_weight = train_cfg.get('metric_weight', 1.0)
 
         scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-7)
 
@@ -192,11 +210,14 @@ class Trainer:
         print(colorstr('bright_green', 'bold', 'OSNet ReID Training'))
         print(colorstr('bright_green', 'bold', f'{"="*60}'))
         print(f"Epochs: {num_epochs}, Starting from: {start_epoch + 1}")
-        if loss_type == 'circle':
+        if loss_type == 'arcface':
+            print(f"Loss: ArcFace (margin={train_cfg.get('arcface_margin', 0.5)}, scale={train_cfg.get('arcface_scale', 64)})")
+        elif loss_type == 'circle':
             metric_desc = f"Circle (margin={train_cfg.get('circle_margin', 0.25)}, scale={train_cfg.get('circle_scale', 64)})"
+            print(f"Loss: CE (smooth={train_cfg['label_smooth']}) + {metric_weight}x {metric_desc}")
         else:
             metric_desc = f"Triplet (margin={train_cfg['triplet_margin']})"
-        print(f"Loss: CE (smooth={train_cfg['label_smooth']}) + {metric_weight}x {metric_desc}")
+            print(f"Loss: CE (smooth={train_cfg['label_smooth']}) + {metric_weight}x {metric_desc}")
         print(f"LR: backbone={train_cfg['backbone_lr']}, head={train_cfg['lr']}")
         print(f"Warmup: {warmup_epochs} epochs")
         print(colorstr('bright_green', f'Results saved to {self.save_dir}\n'))
@@ -224,65 +245,91 @@ class Trainer:
                 optimizer.zero_grad()
 
                 features, logits = self.model(images, task='both')
-                loss_ce = criterion_ce(logits, pids)
-                loss_metric = criterion_metric(features, pids)
-                loss = loss_ce + metric_weight * loss_metric
 
-                loss.backward()
-                optimizer.step()
+                if loss_type == 'arcface':
+                    loss = criterion_arcface(features, pids)
+                    loss.backward()
+                    optimizer.step()
+
+                    total_loss += loss.item()
+                    batch_count += 1
+                    pbar.set_postfix({
+                        'arcface': f'{loss.item():.3f}',
+                        'lr': f'{optimizer.param_groups[1]["lr"]:.1e}',
+                    })
+                else:
+                    loss_ce = criterion_ce(logits, pids)
+                    loss_metric = criterion_metric(features, pids)
+                    loss = loss_ce + metric_weight * loss_metric
+                    loss.backward()
+                    optimizer.step()
+
+                    total_ce += loss_ce.item()
+                    total_metric += loss_metric.item()
+                    total_loss += loss.item()
+                    batch_count += 1
+                    pbar.set_postfix({
+                        'ce': f'{loss_ce.item():.3f}',
+                        loss_type: f'{loss_metric.item():.3f}',
+                        'lr': f'{optimizer.param_groups[1]["lr"]:.1e}',
+                    })
 
                 if self.ema:
                     self.ema.update(self.model)
 
-                total_ce += loss_ce.item()
-                total_metric += loss_metric.item()
-                total_loss += loss.item()
-                batch_count += 1
-
-                pbar.set_postfix({
-                    'ce': f'{loss_ce.item():.3f}',
-                    loss_type: f'{loss_metric.item():.3f}',
-                    'lr': f'{optimizer.param_groups[1]["lr"]:.1e}',
-                })
-
-            avg_ce = total_ce / batch_count
-            avg_metric = total_metric / batch_count
             avg_loss = total_loss / batch_count
 
             # Validation
-            val_total, val_ce, val_metric = validate(
-                self.model, self.val_loader,
-                criterion_ce, criterion_metric, metric_weight, self.device,
-            )
+            if loss_type == 'arcface':
+                val_total = validate_arcface(
+                    self.model, self.val_loader, criterion_arcface, self.device,
+                )
+            else:
+                val_total, val_ce, val_metric = validate(
+                    self.model, self.val_loader,
+                    criterion_ce, criterion_metric, metric_weight, self.device,
+                )
 
             # Update scheduler (after warmup)
             if epoch >= warmup_epochs:
                 scheduler.step(val_total)
 
-            metric_label = loss_type.capitalize()
-            print(f"  Train - CE: {avg_ce:.4f} | {metric_label}: {avg_metric:.4f} | Total: {avg_loss:.4f}")
-            print(f"  Val   - CE: {val_ce:.4f} | {metric_label}: {val_metric:.4f} | Total: {val_total:.4f} | "
-                  f"LR: {optimizer.param_groups[1]['lr']:.2e}")
+            if loss_type == 'arcface':
+                print(f"  Train - ArcFace: {avg_loss:.4f}")
+                print(f"  Val   - ArcFace: {val_total:.4f} | LR: {optimizer.param_groups[1]['lr']:.2e}")
+            else:
+                avg_ce = total_ce / batch_count
+                avg_metric = total_metric / batch_count
+                metric_label = loss_type.capitalize()
+                print(f"  Train - CE: {avg_ce:.4f} | {metric_label}: {avg_metric:.4f} | Total: {avg_loss:.4f}")
+                print(f"  Val   - CE: {val_ce:.4f} | {metric_label}: {val_metric:.4f} | Total: {val_total:.4f} | "
+                      f"LR: {optimizer.param_groups[1]['lr']:.2e}")
 
             if val_total < best_loss:
                 best_loss = val_total
                 best_state = copy.deepcopy(self.model.state_dict())
-                self._save_checkpoint({
+                ckpt = {
                     'model_state_dict': best_state,
                     'epoch': epoch,
                     'best_metric': best_loss,
-                }, 'best.pt')
+                }
+                if criterion_arcface is not None:
+                    ckpt['arcface_state_dict'] = copy.deepcopy(criterion_arcface.state_dict())
+                self._save_checkpoint(ckpt, 'best.pt')
                 print(colorstr('bright_green', f'  Best model saved! (loss: {best_loss:.4f})'))
 
             # Save checkpoint every 5 epochs
             if (epoch + 1) % 5 == 0:
-                self._save_checkpoint({
+                ckpt = {
                     'model_state_dict': self.model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
                     'scheduler_state_dict': scheduler.state_dict(),
                     'epoch': epoch,
                     'best_metric': best_loss,
-                }, 'checkpoint.pt')
+                }
+                if criterion_arcface is not None:
+                    ckpt['arcface_state_dict'] = criterion_arcface.state_dict()
+                self._save_checkpoint(ckpt, 'checkpoint.pt')
 
         # Load best model
         self.model.load_state_dict(best_state)

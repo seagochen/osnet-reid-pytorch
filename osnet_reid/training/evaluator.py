@@ -51,6 +51,26 @@ def validate(model, val_loader, criterion_ce, criterion_metric, metric_weight, d
     return avg_total, avg_ce, avg_metric
 
 
+def validate_arcface(model, val_loader, criterion_arcface, device):
+    """Validate model with ArcFace loss."""
+    model.eval()
+    total_loss = 0
+    batch_count = 0
+
+    with torch.no_grad():
+        for images, pids, _ in val_loader:
+            images = images.to(device)
+            pids = pids.to(device)
+
+            features, _ = model(images, task='both')
+            loss = criterion_arcface(features, pids)
+
+            total_loss += loss.item()
+            batch_count += 1
+
+    return total_loss / max(batch_count, 1)
+
+
 def extract_all_features(model, dataloader, device):
     """Extract L2-normalized features and labels from dataloader."""
     model.eval().to(device)
@@ -68,9 +88,11 @@ def extract_all_features(model, dataloader, device):
     return torch.cat(all_features, dim=0), torch.cat(all_pids, dim=0)
 
 
-def _compute_pair_distances(features, pids, n_samples=2000):
+def _compute_pair_distances(features, pids, n_samples=5000):
     """
-    Sample pairs and compute pairwise Euclidean distances.
+    Sample images and compute all pairwise Euclidean distances.
+
+    Uses vectorized matrix operations for efficiency.
 
     Returns (positive_distances, negative_distances) as numpy arrays.
     """
@@ -79,20 +101,23 @@ def _compute_pair_distances(features, pids, n_samples=2000):
     features = features[indices]
     pids = pids[indices]
 
-    positive_distances = []
-    negative_distances = []
+    # Vectorized pairwise Euclidean distance matrix [n, n]
+    dist_mat = torch.cdist(features, features, p=2).numpy()
 
-    for i in range(n):
-        for j in range(i + 1, min(i + 100, n)):
-            dist = F.pairwise_distance(
-                features[i].unsqueeze(0), features[j].unsqueeze(0)
-            ).item()
-            if pids[i] == pids[j]:
-                positive_distances.append(dist)
-            else:
-                negative_distances.append(dist)
+    # Identity mask: True where same identity
+    pid_arr = pids.numpy()
+    mask = (pid_arr.reshape(-1, 1) == pid_arr.reshape(1, -1))
 
-    return np.array(positive_distances), np.array(negative_distances)
+    # Upper triangle indices (exclude diagonal / self-pairs)
+    rows, cols = np.triu_indices(n, k=1)
+
+    pos_mask = mask[rows, cols]
+    distances = dist_mat[rows, cols]
+
+    positive_distances = distances[pos_mask]
+    negative_distances = distances[~pos_mask]
+
+    return positive_distances, negative_distances
 
 
 def find_best_threshold(model, dataloader, device):
@@ -115,7 +140,7 @@ def find_best_threshold(model, dataloader, device):
     print("Extracting features for EER calculation...")
     all_features, all_pids = extract_all_features(model, dataloader, device)
 
-    print(f"Computing pairwise distances for {min(len(all_features), 2000)} samples...")
+    print(f"Computing pairwise distances for {min(len(all_features), 5000)} samples...")
     pos_dist, neg_dist = _compute_pair_distances(all_features, all_pids)
 
     if len(pos_dist) == 0 or len(neg_dist) == 0:

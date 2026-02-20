@@ -1,61 +1,104 @@
 # OSNet Face Recognition Configuration
+#
 # Usage:
 #   python scripts/train.py --config configs/face.yaml
 #   python scripts/train.py --config configs/face.yaml --arch osnet_x0_5
+#   python scripts/eval.py  --config configs/face.yaml --weights runs/train/face/weights/best.pt
+#
+# CLI 参数优先级高于 YAML，例如:
+#   --epochs 300 --lr 1e-3 --batch_size 256
 
 # ===== Model =====
 model:
+  # 可选架构 (run `python scripts/train.py --list-models`):
+  #   osnet_x1_0      (~2.2M params) - 标准版，精度最高
+  #   osnet_x0_75     (~1.3M params) - 中等
+  #   osnet_x0_5      (~0.6M params) - 轻量
+  #   osnet_x0_25     (~0.2M params) - 超轻量
+  #   osnet_ibn_x1_0  (~2.2M params) - 带 InstanceNorm，跨域泛化更强
   arch: osnet_x1_0
+
+  # true: 加载 ImageNet 预训练权重 | false: 随机初始化 | "path/to/weights.pt": 自定义权重
   pretrained: true
-  reid_dim: 512
-  input_size: [112, 112]     # square crop for aligned faces
+
+  reid_dim: 512                  # 特征维度 (输出嵌入向量的维度)
+  input_size: [112, 112]         # [H, W] - 人脸通常 112x112 (对齐后)
 
 # ===== Data =====
 data:
-  task: face
+  task: face                     # 'reid' (行人重识别) | 'face' (人脸识别)
   root: /home/cxt/datasets/face_data/
-  csv: labels.csv             # CSV: img_path,person_id,camera_id
-  num_instances: 8            # more samples per identity helps face tasks
+  csv: labels.csv                # CSV 格式: img_path,person_id,camera_id
 
+  # PK 采样: 每个 batch 包含 P 个身份 × K 张图片
+  # P = batch_size / num_instances, 例: 128/8 = 16 个身份
+  # 注意: ArcFace 不依赖 PK 采样，但保留以兼容 triplet/circle
+  num_instances: 8
+
+  # 数据增强
   augmentation:
-    pad: 4                    # smaller padding for 112x112 images
-    random_flip: 0.5
-    brightness: 0.2
-    contrast: 0.15
-    saturation: 0.1
-    hue: 0.0
-    random_erasing: 0.5
-    erasing_scale: [0.02, 0.4]
-    random_rotation: 10       # slight rotation for face pose variation
+    pad: 4                       # 先 padding 再 RandomCrop，模拟平移
+    random_flip: 0.5             # 水平翻转概率
+    brightness: 0.2              # ColorJitter 亮度范围 [1-v, 1+v]
+    contrast: 0.15               # ColorJitter 对比度范围
+    saturation: 0.1              # ColorJitter 饱和度范围
+    hue: 0.0                     # ColorJitter 色相范围 (人脸建议 0)
+    random_erasing: 0.3          # RandomErasing 概率 (人脸建议 0.2-0.4)
+    erasing_scale: [0.02, 0.33]  # 擦除面积占比范围
+    random_rotation: 5           # 随机旋转度数 (人脸建议 0-5)
 
 # ===== Training =====
 train:
-  epochs: 100
-  lr: 3.5e-4
-  backbone_lr: 3.5e-5
-  batch_size: 128
-  num_workers: 4
-  weight_decay: 5.0e-4
-  label_smooth: 0.1
-  warmup_epochs: 10
+  epochs: 200
+  lr: 3.5e-4                     # Head 学习率 (BN neck + classifier + ArcFace weight)
+  backbone_lr: 3.5e-5            # Backbone 学习率 (通常为 lr 的 1/10)
+  batch_size: 128                # 总 batch size
+  num_workers: 4                 # DataLoader 工作进程数
+  weight_decay: 5.0e-4           # L2 正则化
+  label_smooth: 0.1              # 标签平滑 (仅 triplet/circle 模式下的 CE 使用)
+  warmup_epochs: 10              # 线性学习率预热轮数
 
-  loss_type: circle
-  metric_weight: 1.0
+  # ===== 损失函数 =====
+  # 可选: 'triplet' | 'circle' | 'arcface'
+  #
+  # triplet: CE(label_smooth) + TripletLoss(hard mining)
+  #   - 经典 ReID 方案，需要 PK 采样
+  #   - 参数: triplet_margin, metric_weight
+  #
+  # circle: CE(label_smooth) + CircleLoss(self-paced)
+  #   - 更灵活的 pair 损失，自适应权重
+  #   - 参数: circle_margin, circle_scale, metric_weight
+  #
+  # arcface: ArcFace 单一损失 (推荐用于人脸)
+  #   - 角度间隔惩罚，特征在超球面上更具判别性
+  #   - 内部包含可学习的分类权重矩阵，替代 CE + metric 组合
+  #   - 参数: arcface_margin, arcface_scale
+  loss_type: arcface
 
-  circle_margin: 0.25
-  circle_scale: 64
+  # --- ArcFace 参数 (loss_type: arcface) ---
+  arcface_margin: 0.5            # 角度间隔 m (越大越难训练但特征更分离, 推荐 0.3-0.5)
+  arcface_scale: 64              # 缩放因子 s (推荐 32-64)
+
+  # --- Triplet 参数 (loss_type: triplet) ---
+  # triplet_margin: 0.3          # d(a,p) - d(a,n) + margin > 0
+  # metric_weight: 1.0           # CE 和 Triplet 的权重: total = CE + weight * Triplet
+
+  # --- Circle 参数 (loss_type: circle) ---
+  # circle_margin: 0.25          # 决策边界间隔
+  # circle_scale: 64             # 缩放因子
+  # metric_weight: 1.0           # CE 和 Circle 的权重: total = CE + weight * Circle
 
 # ===== Validation =====
 val:
-  val_split: 0.2
+  val_split: 0.2                 # 验证集比例 (从训练数据中随机划分)
 
 # ===== Output =====
 output:
-  project: runs/train
-  name: face
+  project: runs/train            # 输出根目录
+  name: face                     # 实验名称 (自动递增: face, face2, face3...)
 
 # ===== Advanced =====
 advanced:
-  ema: false
-  seed: 0
-  device: ""
+  ema: false                     # 指数移动平均 (Exponential Moving Average)
+  seed: 0                        # 随机种子 (0 = 固定种子, 保证可复现)
+  device: ""                     # 设备 ("cuda", "cpu", "" = 自动检测)

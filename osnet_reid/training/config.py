@@ -147,6 +147,8 @@ def build_config(args) -> Dict[str, Any]:
     t.setdefault('triplet_margin', 0.3)
     t.setdefault('circle_margin', 0.25)
     t.setdefault('circle_scale', 64)
+    t.setdefault('arcface_margin', 0.5)
+    t.setdefault('arcface_scale', 64)
 
     v = config['val']
     v.setdefault('val_split', 0.2)
@@ -187,6 +189,8 @@ _CLI_MAP = {
     'loss_type':        ('train', 'loss_type'),
     'circle_margin':    ('train', 'circle_margin'),
     'circle_scale':     ('train', 'circle_scale'),
+    'arcface_margin':   ('train', 'arcface_margin'),
+    'arcface_scale':    ('train', 'arcface_scale'),
     'val_split':        ('val', 'val_split'),
     'project':          ('output', 'project'),
     'name':             ('output', 'name'),
@@ -220,6 +224,8 @@ _ARGPARSE_DEFAULTS = {
     'loss_type': 'triplet',
     'circle_margin': 0.25,
     'circle_scale': 64,
+    'arcface_margin': 0.5,
+    'arcface_scale': 64,
     'val_split': 0.2,
     'project': 'runs/train',
     'name': 'exp',
