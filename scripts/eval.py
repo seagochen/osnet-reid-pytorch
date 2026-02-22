@@ -291,12 +291,12 @@ def main():
     config['model']['pretrained'] = False
     state_dict = ckpt.get('model_state_dict', ckpt)
 
-    # Infer num_classes from checkpoint or dataset if config has default 0
+    # Infer num_classes from checkpoint (0 if no classifier, e.g. ArcFace)
     if config['model'].get('num_classes', 0) == 0:
         if 'classifier.weight' in state_dict:
             config['model']['num_classes'] = state_dict['classifier.weight'].shape[0]
         else:
-            config['model']['num_classes'] = dataset.num_pids
+            config['model']['num_classes'] = 0
 
     model = ReIDModel(config)
     model.load_state_dict(state_dict)

@@ -5,8 +5,10 @@ Single-stage training with combined CrossEntropy + metric loss (Triplet or Circl
 Uses RandomIdentitySampler for batch construction (P identities x K images).
 """
 import copy
+import csv
 import torch
 import torch.optim as optim
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, random_split
 from pathlib import Path
 from tqdm import tqdm
@@ -63,7 +65,13 @@ class Trainer:
         )
 
         # Update num_classes from dataset
-        config['model']['num_classes'] = full_dataset.num_pids
+        # ArcFace has its own classifier weight matrix; skip building model classifier
+        loss_type = config['train'].get('loss_type', 'triplet')
+        if loss_type == 'arcface':
+            config['model']['num_classes'] = 0
+            config['model']['_actual_num_classes'] = full_dataset.num_pids
+        else:
+            config['model']['num_classes'] = full_dataset.num_pids
 
         # Split into train/val
         generator = torch.Generator().manual_seed(42)
@@ -161,9 +169,10 @@ class Trainer:
         metric_weight = train_cfg.get('metric_weight', 1.0)
 
         if loss_type == 'arcface':
+            num_classes = config['model'].get('_actual_num_classes', config['model']['num_classes'])
             criterion_arcface = ArcFaceLoss(
                 feature_dim=config['model']['reid_dim'],
-                num_classes=config['model']['num_classes'],
+                num_classes=num_classes,
                 margin=train_cfg.get('arcface_margin', 0.5),
                 scale=train_cfg.get('arcface_scale', 64),
             ).to(self.device)
@@ -193,12 +202,19 @@ class Trainer:
         if criterion_arcface is not None:
             params_other.extend(list(criterion_arcface.parameters()))
 
-        optimizer = optim.Adam([
-            {'params': params_backbone, 'lr': train_cfg['backbone_lr']},
-            {'params': params_other, 'lr': train_cfg['lr']},
-        ], weight_decay=train_cfg['weight_decay'])
-
-        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-7)
+        if loss_type == 'arcface':
+            # SGD + momentum is the standard optimizer for ArcFace training
+            optimizer = optim.SGD([
+                {'params': params_backbone, 'lr': train_cfg['backbone_lr']},
+                {'params': params_other, 'lr': train_cfg['lr']},
+            ], momentum=0.9, weight_decay=train_cfg['weight_decay'])
+            scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs - warmup_epochs, eta_min=1e-6)
+        else:
+            optimizer = optim.Adam([
+                {'params': params_backbone, 'lr': train_cfg['backbone_lr']},
+                {'params': params_other, 'lr': train_cfg['lr']},
+            ], weight_decay=train_cfg['weight_decay'])
+            scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-7)
 
         # Try to resume
         start_epoch, best_loss = self._load_checkpoint(
@@ -222,6 +238,13 @@ class Trainer:
         print(f"Warmup: {warmup_epochs} epochs")
         print(colorstr('bright_green', f'Results saved to {self.save_dir}\n'))
 
+        # Training history CSV
+        history_path = self.save_dir / 'history.csv'
+        history_file = open(history_path, 'a', newline='')
+        history_writer = csv.writer(history_file)
+        if start_epoch == 0:
+            history_writer.writerow(['epoch', 'train_loss', 'val_loss', 'lr_backbone', 'lr_head'])
+
         for epoch in range(start_epoch, num_epochs):
             self.model.train()
 
@@ -244,9 +267,9 @@ class Trainer:
 
                 optimizer.zero_grad()
 
-                features, logits = self.model(images, task='both')
-
                 if loss_type == 'arcface':
+                    # Use post-BN L2-normalized features (same space as evaluation)
+                    features = self.model(images, task='reid')
                     loss = criterion_arcface(features, pids)
                     loss.backward()
                     optimizer.step()
@@ -258,6 +281,7 @@ class Trainer:
                         'lr': f'{optimizer.param_groups[1]["lr"]:.1e}',
                     })
                 else:
+                    features, logits = self.model(images, task='both')
                     loss_ce = criterion_ce(logits, pids)
                     loss_metric = criterion_metric(features, pids)
                     loss = loss_ce + metric_weight * loss_metric
@@ -292,7 +316,10 @@ class Trainer:
 
             # Update scheduler (after warmup)
             if epoch >= warmup_epochs:
-                scheduler.step(val_total)
+                if loss_type == 'arcface':
+                    scheduler.step()
+                else:
+                    scheduler.step(val_total)
 
             if loss_type == 'arcface':
                 print(f"  Train - ArcFace: {avg_loss:.4f}")
@@ -304,6 +331,13 @@ class Trainer:
                 print(f"  Train - CE: {avg_ce:.4f} | {metric_label}: {avg_metric:.4f} | Total: {avg_loss:.4f}")
                 print(f"  Val   - CE: {val_ce:.4f} | {metric_label}: {val_metric:.4f} | Total: {val_total:.4f} | "
                       f"LR: {optimizer.param_groups[1]['lr']:.2e}")
+
+            # Log to CSV
+            history_writer.writerow([
+                epoch + 1, f'{avg_loss:.6f}', f'{val_total:.6f}',
+                f'{optimizer.param_groups[0]["lr"]:.2e}', f'{optimizer.param_groups[1]["lr"]:.2e}',
+            ])
+            history_file.flush()
 
             if val_total < best_loss:
                 best_loss = val_total
@@ -330,6 +364,8 @@ class Trainer:
                 if criterion_arcface is not None:
                     ckpt['arcface_state_dict'] = criterion_arcface.state_dict()
                 self._save_checkpoint(ckpt, 'checkpoint.pt')
+
+        history_file.close()
 
         # Load best model
         self.model.load_state_dict(best_state)

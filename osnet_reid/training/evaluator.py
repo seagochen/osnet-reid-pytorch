@@ -62,7 +62,8 @@ def validate_arcface(model, val_loader, criterion_arcface, device):
             images = images.to(device)
             pids = pids.to(device)
 
-            features, _ = model(images, task='both')
+            # Use post-BN L2-normalized features (same space as evaluation)
+            features = model(images, task='reid')
             loss = criterion_arcface(features, pids)
 
             total_loss += loss.item()

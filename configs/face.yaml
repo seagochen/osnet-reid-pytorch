@@ -50,13 +50,13 @@ data:
 # ===== Training =====
 train:
   epochs: 200
-  lr: 3.5e-4                     # Head 学习率 (BN neck + classifier + ArcFace weight)
-  backbone_lr: 3.5e-5            # Backbone 学习率 (通常为 lr 的 1/10)
+  lr: 1.0e-1                     # Head 学习率 (ArcFace: SGD 0.1; triplet/circle: Adam 3.5e-4)
+  backbone_lr: 1.0e-2            # Backbone 学习率 (通常为 lr 的 1/10)
   batch_size: 128                # 总 batch size
   num_workers: 4                 # DataLoader 工作进程数
   weight_decay: 5.0e-4           # L2 正则化
   label_smooth: 0.1              # 标签平滑 (仅 triplet/circle 模式下的 CE 使用)
-  warmup_epochs: 10              # 线性学习率预热轮数
+  warmup_epochs: 5               # 线性学习率预热轮数
 
   # ===== 损失函数 =====
   # 可选: 'triplet' | 'circle' | 'arcface'
@@ -76,8 +76,8 @@ train:
   loss_type: arcface
 
   # --- ArcFace 参数 (loss_type: arcface) ---
-  arcface_margin: 0.5            # 角度间隔 m (越大越难训练但特征更分离, 推荐 0.3-0.5)
-  arcface_scale: 64              # 缩放因子 s (推荐 32-64)
+  arcface_margin: 0.3            # 角度间隔 m (0.3 更容易收敛, 收敛后可提到 0.5)
+  arcface_scale: 32              # 缩放因子 s (32 配合 margin=0.3, 梯度更稳定)
 
   # --- Triplet 参数 (loss_type: triplet) ---
   # triplet_margin: 0.3          # d(a,p) - d(a,n) + margin > 0
